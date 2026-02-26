@@ -1,0 +1,4 @@
+[Container]
+Image=frontend
+Pod=my-stack.pod
+Exec=/app/start

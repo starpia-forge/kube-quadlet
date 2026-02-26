@@ -1,0 +1,6 @@
+[Pod]
+PublishPort=9090:80
+Volume=shared-data:/data
+
+[Install]
+WantedBy=multi-user.target

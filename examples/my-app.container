@@ -1,0 +1,7 @@
+[Unit]
+Description=My App
+
+[Container]
+Image=nginx
+PublishPort=8080:80
+Environment=FOO=bar

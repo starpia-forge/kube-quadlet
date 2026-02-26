@@ -1,0 +1,4 @@
+[Container]
+Image=backend
+Pod=my-stack.pod
+Volume=db-data:/var/lib/db
