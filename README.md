@@ -27,6 +27,13 @@ kube-quadlet convert ./my-app.container > deployment.yaml
 kube-quadlet convert ./my-stack.pod > my-stack.yaml
 ```
 
+## 📚 Documentation
+
+For detailed information on how Quadlet fields are mapped to Kubernetes objects, please refer to the conversion rules:
+
+*   [Conversion Rules (English)](docs/conversion.en.md)
+*   [Conversion Rules (Korean)](docs/conversion.ko.md)
+
 ## 🤝 Conventions
 
 * **Commit Messages:** All commit messages must adhere to the [Conventional Commits](https://www.conventionalcommits.org/) specification (e.g., `feat: add container parser`, `fix: correct port mapping`, `docs: update readme`).
