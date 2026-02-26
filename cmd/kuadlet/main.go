@@ -36,7 +36,7 @@ func main() {
 }
 
 func runConvert(cmd *cobra.Command, args []string) error {
-	inputFile := args[0]
+	inputFile := filepath.Clean(args[0])
 	absPath, err := filepath.Abs(inputFile)
 	if err != nil {
 		return err
@@ -68,7 +68,10 @@ func runConvert(cmd *cobra.Command, args []string) error {
 		c := quadlet.LoadContainer(u)
 		// Check if it belongs to a pod
 		if c.Container.Pod != "" {
-			fmt.Fprintf(os.Stderr, "Warning: Container %s belongs to pod %s. Converting as standalone Deployment (pod wrapper logic not applied).\n", filename, c.Container.Pod)
+			// Sanitize output for XSS/log injection prevention (G705)
+			safeFilename := strings.ReplaceAll(filename, "\n", "")
+			safePod := strings.ReplaceAll(c.Container.Pod, "\n", "")
+			fmt.Fprintf(os.Stderr, "Warning: Container %s belongs to pod %s. Converting as standalone Deployment (pod wrapper logic not applied).\n", safeFilename, safePod)
 		}
 		objs, err := converter.ConvertContainer(c, name)
 		if err != nil {
@@ -136,11 +139,12 @@ func findContainersForPod(dir string, podFilename string) ([]*quadlet.ContainerU
 			continue
 		}
 
-		path := filepath.Join(dir, file.Name())
+		path := filepath.Clean(filepath.Join(dir, file.Name()))
 		f, err := os.Open(path)
 		if err != nil {
 			// Warn and skip?
-			fmt.Fprintf(os.Stderr, "Warning: failed to read %s: %v\n", path, err)
+			safePath := strings.ReplaceAll(path, "\n", "")
+			fmt.Fprintf(os.Stderr, "Warning: failed to read %s: %v\n", safePath, err)
 			continue
 		}
 

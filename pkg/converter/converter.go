@@ -2,6 +2,7 @@ package converter
 
 import (
 	"fmt"
+	"math"
 	"kuadlet/pkg/quadlet"
 	"strconv"
 	"strings"
@@ -286,7 +287,11 @@ func createContainerSpec(c *quadlet.ContainerUnit, name string) (*corev1.Contain
                     }
                 }
                 if c.Container.HealthRetries > 0 {
-                    livenessProbe.FailureThreshold = int32(c.Container.HealthRetries)
+                    if c.Container.HealthRetries > math.MaxInt32 {
+                         livenessProbe.FailureThreshold = math.MaxInt32
+                    } else {
+                         livenessProbe.FailureThreshold = int32(c.Container.HealthRetries)
+                    }
                 }
             }
         }
@@ -391,6 +396,13 @@ func parsePortSpec(spec string, name string) (*corev1.ContainerPort, int, *corev
 	hPort, err := strconv.Atoi(hostPortStr)
 	if err != nil {
 		hPort = cPort
+	}
+
+	if cPort > 65535 || cPort < 0 {
+		return nil, 0, nil, fmt.Errorf("container port %d out of valid range (0-65535)", cPort)
+	}
+	if hPort > 65535 || hPort < 0 {
+		return nil, 0, nil, fmt.Errorf("host port %d out of valid range (0-65535)", hPort)
 	}
 
 	cp := &corev1.ContainerPort{
