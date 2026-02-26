@@ -69,8 +69,8 @@ func runConvert(cmd *cobra.Command, args []string) error {
 		// Check if it belongs to a pod
 		if c.Container.Pod != "" {
 			// Sanitize output for XSS/log injection prevention (G705)
-			safeFilename := strings.ReplaceAll(filename, "\n", "")
-			safePod := strings.ReplaceAll(c.Container.Pod, "\n", "")
+			safeFilename := strings.ReplaceAll(strings.ReplaceAll(filename, "\n", ""), "\r", "")
+			safePod := strings.ReplaceAll(strings.ReplaceAll(c.Container.Pod, "\n", ""), "\r", "")
 			fmt.Fprintf(os.Stderr, "Warning: Container %s belongs to pod %s. Converting as standalone Deployment (pod wrapper logic not applied).\n", safeFilename, safePod)
 		}
 		objs, err := converter.ConvertContainer(c, name)
@@ -143,7 +143,7 @@ func findContainersForPod(dir string, podFilename string) ([]*quadlet.ContainerU
 		f, err := os.Open(path)
 		if err != nil {
 			// Warn and skip?
-			safePath := strings.ReplaceAll(path, "\n", "")
+			safePath := strings.ReplaceAll(strings.ReplaceAll(path, "\n", ""), "\r", "")
 			fmt.Fprintf(os.Stderr, "Warning: failed to read %s: %v\n", safePath, err)
 			continue
 		}

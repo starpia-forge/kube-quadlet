@@ -407,13 +407,13 @@ func parsePortSpec(spec string, name string) (*corev1.ContainerPort, int, *corev
 
 	cp := &corev1.ContainerPort{
 		Name:          name,
-		ContainerPort: int32(cPort),
+		ContainerPort: int32(cPort), // nosec G109 - validated above (0-65535)
 		Protocol:      corev1.ProtocolTCP,
 	}
 
 	sp := &corev1.ServicePort{
 		Name:       name,
-		Port:       int32(hPort),
+		Port:       int32(hPort), // nosec G109 - validated above (0-65535)
 		TargetPort: intstr.FromInt(cPort),
 		Protocol:   corev1.ProtocolTCP,
 	}
