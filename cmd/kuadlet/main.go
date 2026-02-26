@@ -54,7 +54,7 @@ func runConvert(cmd *cobra.Command, args []string) error {
 		if closeErr := f.Close(); closeErr != nil {
 			safeInput := sanitize(inputFile)
 			safeErr := sanitize(closeErr.Error())
-			fmt.Fprintf(os.Stderr, "Warning: failed to close file %s: %s\n", safeInput, safeErr)
+			fmt.Fprintf(os.Stderr, "Warning: failed to close file %s: %s\n", safeInput, safeErr) // #nosec G705
 		}
 	}()
 
@@ -73,6 +73,7 @@ func runConvert(cmd *cobra.Command, args []string) error {
 			// Sanitize output for XSS/log injection prevention (G705)
 			safeFilename := sanitize(filename)
 			safePod := sanitize(c.Container.Pod)
+			// #nosec G705
 			fmt.Fprintf(os.Stderr, "Warning: Container %s belongs to pod %s. Converting as standalone Deployment (pod wrapper logic not applied).\n", safeFilename, safePod)
 		}
 		objs, err := converter.ConvertContainer(c, name)
