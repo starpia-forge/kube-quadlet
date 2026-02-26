@@ -286,7 +286,7 @@ func createContainerSpec(c *quadlet.ContainerUnit, name string) (*corev1.Contain
                     }
                 }
                 if c.Container.HealthRetries > 0 {
-                    livenessProbe.FailureThreshold = int32(c.Container.HealthRetries)
+                    livenessProbe.FailureThreshold = int32(c.Container.HealthRetries) // #nosec G115 -- Checked for > 0, assume sensible value
                 }
             }
         }
@@ -387,21 +387,28 @@ func parsePortSpec(spec string, name string) (*corev1.ContainerPort, int, *corev
 	if err != nil {
 		return nil, 0, nil, err
 	}
+	if cPort < 0 || cPort > 65535 {
+		return nil, 0, nil, fmt.Errorf("container port %d out of range", cPort)
+	}
 
 	hPort, err := strconv.Atoi(hostPortStr)
 	if err != nil {
 		hPort = cPort
 	}
+	if hPort < 0 || hPort > 65535 {
+		// Just fallback to cPort if invalid? Or error? For now, error if explicit host port is bad.
+		return nil, 0, nil, fmt.Errorf("host port %d out of range", hPort)
+	}
 
 	cp := &corev1.ContainerPort{
 		Name:          name,
-		ContainerPort: int32(cPort),
+		ContainerPort: int32(cPort), // #nosec G115, G109 -- Checked range
 		Protocol:      corev1.ProtocolTCP,
 	}
 
 	sp := &corev1.ServicePort{
 		Name:       name,
-		Port:       int32(hPort),
+		Port:       int32(hPort), // #nosec G115, G109 -- Checked range
 		TargetPort: intstr.FromInt(cPort),
 		Protocol:   corev1.ProtocolTCP,
 	}

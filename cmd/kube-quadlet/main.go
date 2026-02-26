@@ -46,7 +46,8 @@ func runConvert(cmd *cobra.Command, args []string) error {
 	ext := filepath.Ext(filename)
 	name := strings.TrimSuffix(filename, ext)
 
-	f, err := os.Open(inputFile)
+	cleanInput := filepath.Clean(inputFile)
+	f, err := os.Open(cleanInput)
 	if err != nil {
 		return err
 	}
@@ -68,6 +69,7 @@ func runConvert(cmd *cobra.Command, args []string) error {
 		c := quadlet.LoadContainer(u)
 		// Check if it belongs to a pod
 		if c.Container.Pod != "" {
+			// #nosec G705 -- Using Fprintf to stderr is safe in CLI context
 			fmt.Fprintf(os.Stderr, "Warning: Container %s belongs to pod %s. Converting as standalone Deployment (pod wrapper logic not applied).\n", filename, c.Container.Pod)
 		}
 		objs, err := converter.ConvertContainer(c, name)
@@ -137,10 +139,12 @@ func findContainersForPod(dir string, podFilename string) ([]*quadlet.ContainerU
 		}
 
 		path := filepath.Join(dir, file.Name())
-		f, err := os.Open(path)
+		// Clean the path before opening
+		cleanPath := filepath.Clean(path)
+		f, err := os.Open(cleanPath)
 		if err != nil {
 			// Warn and skip?
-			fmt.Fprintf(os.Stderr, "Warning: failed to read %s: %v\n", path, err)
+			fmt.Fprintf(os.Stderr, "Warning: failed to read %s: %v\n", cleanPath, err)
 			continue
 		}
 
