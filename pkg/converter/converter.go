@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"kuadlet/pkg/quadlet"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -202,6 +203,53 @@ func ConvertPod(p *quadlet.PodUnit, containers []*quadlet.ContainerUnit, contain
 	}
 
 	return objects, nil
+}
+
+func ConvertKube(k *quadlet.KubeUnit, name string) ([]runtime.Object, error) {
+	// Kube unit points to a YAML file.
+	// We can try to read it if we know the path, but the converter might not have access to the file system context easily
+	// if we passed just the struct. However, since we are doing static conversion, we can assume relative paths are relative to where we run.
+	// But `kuadlet` is running from some PWD.
+	// The `Yaml` field in `k.Kube` is the path.
+
+	// Since we can't easily include the file content here without reading it,
+	// and `kuadlet convert` logic is better suited to read it if we wanted to embed it.
+	// But simply echoing it or warning is safer.
+
+	// Warning as per plan
+	safeName := sanitize(name)
+	// #nosec G705
+	fmt.Fprintf(os.Stderr, "Warning: .kube unit %s detected. This unit type wraps a Kubernetes YAML file. Kuadlet cannot fully convert this wrapper to a Kubernetes manifest as it IS already a Kubernetes manifest wrapper. Please apply the referenced YAML file directly: %s\n", safeName, k.Kube.Yaml)
+
+	return nil, nil
+}
+
+func ConvertNetwork(n *quadlet.NetworkUnit, name string) ([]runtime.Object, error) {
+	safeName := sanitize(name)
+	// #nosec G705
+	fmt.Fprintf(os.Stderr, "Warning: .network unit %s detected. Kubernetes handles networking differently (CNI). Podman network configurations do not directly map to Kubernetes resources.\n", safeName)
+	return nil, nil
+}
+
+func ConvertImage(i *quadlet.ImageUnit, name string) ([]runtime.Object, error) {
+	safeName := sanitize(name)
+	// #nosec G705
+	fmt.Fprintf(os.Stderr, "Warning: .image unit %s detected. Kubernetes pulls images automatically on Pod scheduling. Explicit image pull units are not typically needed or supported as standalone resources.\n", safeName)
+	return nil, nil
+}
+
+func ConvertBuild(b *quadlet.BuildUnit, name string) ([]runtime.Object, error) {
+	safeName := sanitize(name)
+	// #nosec G705
+	fmt.Fprintf(os.Stderr, "Warning: .build unit %s detected. Kubernetes does not support building images at runtime. Please build and push the image to a registry before deploying.\n", safeName)
+	return nil, nil
+}
+
+func ConvertArtifact(a *quadlet.ArtifactUnit, name string) ([]runtime.Object, error) {
+	safeName := sanitize(name)
+	// #nosec G705
+	fmt.Fprintf(os.Stderr, "Warning: .artifact unit %s detected. This is an experimental Quadlet feature not directly supported in Kubernetes.\n", safeName)
+	return nil, nil
 }
 
 func createContainerSpec(c *quadlet.ContainerUnit, name string) (*corev1.Container, []corev1.Volume, []corev1.ServicePort, error) {
@@ -501,4 +549,8 @@ func parseVolumeSpec(spec string, name string) (*corev1.Volume, *corev1.VolumeMo
 	}
 
 	return vol, vm, nil
+}
+
+func sanitize(s string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(s, "\n", ""), "\r", "")
 }

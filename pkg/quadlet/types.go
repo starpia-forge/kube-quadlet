@@ -21,6 +21,41 @@ type VolumeUnit struct {
 	Install InstallSection
 }
 
+type KubeUnit struct {
+	Unit    UnitSection
+	Kube    KubeSection
+	Service ServiceSection
+	Install InstallSection
+}
+
+type NetworkUnit struct {
+	Unit    UnitSection
+	Network NetworkSection
+	Service ServiceSection
+	Install InstallSection
+}
+
+type ImageUnit struct {
+	Unit    UnitSection
+	Image   ImageSection
+	Service ServiceSection
+	Install InstallSection
+}
+
+type BuildUnit struct {
+	Unit    UnitSection
+	Build   BuildSection
+	Service ServiceSection
+	Install InstallSection
+}
+
+type ArtifactUnit struct {
+	Unit     UnitSection
+	Artifact ArtifactSection
+	Service  ServiceSection
+	Install  InstallSection
+}
+
 type UnitSection struct {
 	Description string
 	Wants       []string
@@ -65,11 +100,11 @@ type ContainerSection struct {
 	Memory string
 
 	// Security
-	AddCapability  []string
-	DropCapability []string
+	AddCapability   []string
+	DropCapability  []string
 	NoNewPrivileges bool
-	RunInit        bool
-	ReadOnly       bool
+	RunInit         bool
+	ReadOnly        bool
 
 	// Metadata
 	Label      map[string]string
@@ -97,4 +132,106 @@ type VolumeSection struct {
 	Group      string
 	Driver     string
 	Options    []string
+}
+
+type KubeSection struct {
+	Yaml                string
+	AutoUpdate          []string
+	ConfigMap           []string
+	ContainersConfModule []string
+	ExitCodePropagation string
+	GlobalArgs          []string
+	KubeDownForce       bool
+	LogDriver           string
+	Network             []string
+	PodmanArgs          []string
+	PublishPort         []string
+	SetWorkingDirectory string
+	UserNS              string
+}
+
+type NetworkSection struct {
+	ContainersConfModule []string
+	DisableDNS           bool
+	DNS                  []string
+	Driver               string
+	Gateway              []string
+	GlobalArgs           []string
+	InterfaceName        string
+	Internal             bool
+	IPAMDriver           string
+	IPRange              []string
+	IPv6                 bool
+	Label                map[string]string
+	NetworkDeleteOnStop  bool
+	NetworkName          string
+	Options              []string
+	PodmanArgs           []string
+	Subnet               []string
+}
+
+type ImageSection struct {
+	AllTags              bool
+	Arch                 string
+	AuthFile             string
+	CertDir              string
+	ContainersConfModule []string
+	Creds                string
+	DecryptionKey        string
+	GlobalArgs           []string
+	Image                string
+	ImageTag             string
+	OS                   string
+	PodmanArgs           []string
+	Policy               string
+	Retry                int
+	RetryDelay           string
+	TLSVerify            bool
+	Variant              string
+}
+
+type BuildSection struct {
+	Annotation           map[string]string
+	Arch                 string
+	AuthFile             string
+	BuildArg             map[string]string
+	ContainersConfModule []string
+	DNS                  []string
+	DNSOption            []string
+	DNSSearch            []string
+	Environment          map[string]string
+	File                 string
+	ForceRM              bool
+	GlobalArgs           []string
+	GroupAdd             []string
+	IgnoreFile           string
+	ImageTag             []string
+	Label                map[string]string
+	Network              []string
+	PodmanArgs           []string
+	Pull                 string
+	Retry                int
+	RetryDelay           string
+	Secret               []string
+	SetWorkingDirectory  string
+	Target               string
+	TLSVerify            bool
+	Variant              string
+	Volume               []string
+}
+
+type ArtifactSection struct {
+	Artifact             string
+	AuthFile             string
+	CertDir              string
+	ContainersConfModule []string
+	Creds                string
+	DecryptionKey        string
+	GlobalArgs           []string
+	PodmanArgs           []string
+	Quiet                bool
+	Retry                int
+	RetryDelay           string
+	ServiceName          string
+	TLSVerify            bool
 }
