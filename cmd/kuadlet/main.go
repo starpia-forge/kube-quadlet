@@ -232,16 +232,24 @@ func runConvert(cmd *cobra.Command, args []string) error {
 
 			for i, obj := range res.Objects {
 				if i > 0 {
-					f.WriteString("---\n")
+					if _, err := f.WriteString("---\n"); err != nil {
+						_ = f.Close()
+						return fmt.Errorf("failed to write separator to file %s: %w", outFilename, err)
+					}
 				}
 				data, err := yaml.Marshal(obj)
 				if err != nil {
-					f.Close()
+					_ = f.Close()
 					return fmt.Errorf("failed to marshal object: %w", err)
 				}
-				f.Write(data)
+				if _, err := f.Write(data); err != nil {
+					_ = f.Close()
+					return fmt.Errorf("failed to write data to file %s: %w", outFilename, err)
+				}
 			}
-			f.Close()
+			if err := f.Close(); err != nil {
+				return fmt.Errorf("failed to close file %s: %w", outFilename, err)
+			}
 		} else {
 			// Stdout
 			if !first {
