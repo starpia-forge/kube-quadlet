@@ -44,7 +44,7 @@ Pod=my-pod.pod
 	// c1 name: "app", c2 name: "sidecar"
 	containerNames := []string{"app", "sidecar"}
 
-	objs, err := ConvertPod(podUnit, containers, containerNames, "my-pod")
+	objs, err := ConvertPod(podUnit, containers, containerNames, "my-pod", nil)
 	if err != nil {
 		t.Fatalf("ConvertPod failed: %v", err)
 	}

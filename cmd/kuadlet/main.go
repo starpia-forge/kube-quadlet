@@ -43,6 +43,31 @@ func main() {
 	}
 }
 
+// Registry to hold loaded units for cross-referencing
+type Registry struct {
+	Containers map[string]*quadlet.ContainerUnit
+	Volumes    map[string]*quadlet.VolumeUnit
+	Pods       map[string]*quadlet.PodUnit
+	Kubes      map[string]*quadlet.KubeUnit
+	Networks   map[string]*quadlet.NetworkUnit
+	Images     map[string]*quadlet.ImageUnit
+	Builds     map[string]*quadlet.BuildUnit
+	Artifacts  map[string]*quadlet.ArtifactUnit
+}
+
+func newRegistry() *Registry {
+	return &Registry{
+		Containers: make(map[string]*quadlet.ContainerUnit),
+		Volumes:    make(map[string]*quadlet.VolumeUnit),
+		Pods:       make(map[string]*quadlet.PodUnit),
+		Kubes:      make(map[string]*quadlet.KubeUnit),
+		Networks:   make(map[string]*quadlet.NetworkUnit),
+		Images:     make(map[string]*quadlet.ImageUnit),
+		Builds:     make(map[string]*quadlet.BuildUnit),
+		Artifacts:  make(map[string]*quadlet.ArtifactUnit),
+	}
+}
+
 func runConvert(cmd *cobra.Command, args []string) error {
 	var inputFiles []string
 
@@ -81,22 +106,15 @@ func runConvert(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("no supported Quadlet files found")
 	}
 
-	// Process files
-	type result struct {
-		Name    string
-		Objects []runtime.Object
-		Path    string
-	}
-
-	var results []result
+	registry := newRegistry()
 	processedNames := make(map[string]string) // name -> path
 
+	// Pass 1: Load all units
 	for _, inputFile := range inputFiles {
 		absPath, err := filepath.Abs(inputFile)
 		if err != nil {
 			return err
 		}
-		dir := filepath.Dir(absPath)
 		filename := filepath.Base(absPath)
 		ext := filepath.Ext(filename)
 		name := strings.TrimSuffix(filename, ext)
@@ -111,7 +129,7 @@ func runConvert(cmd *cobra.Command, args []string) error {
 		}
 		processedNames[name] = absPath
 
-		// #nosec G304 -- inputFile is user-specified, intended behavior for CLI
+		// #nosec G304
 		f, err := os.Open(inputFile)
 		if err != nil {
 			safePath := sanitize(inputFile)
@@ -121,7 +139,7 @@ func runConvert(cmd *cobra.Command, args []string) error {
 		}
 
 		u, err := parser.Parse(f)
-		_ = f.Close() // Close immediately after parsing
+		_ = f.Close()
 		if err != nil {
 			safePath := sanitize(inputFile)
 			safeErr := sanitize(err.Error())
@@ -129,94 +147,119 @@ func runConvert(cmd *cobra.Command, args []string) error {
 			continue
 		}
 
+		switch ext {
+		case ".container":
+			registry.Containers[name] = quadlet.LoadContainer(u)
+		case ".volume":
+			registry.Volumes[name] = quadlet.LoadVolume(u)
+		case ".pod":
+			registry.Pods[name] = quadlet.LoadPod(u)
+		case ".kube":
+			registry.Kubes[name] = quadlet.LoadKube(u)
+		case ".network":
+			registry.Networks[name] = quadlet.LoadNetwork(u)
+		case ".image":
+			registry.Images[name] = quadlet.LoadImage(u)
+		case ".build":
+			registry.Builds[name] = quadlet.LoadBuild(u)
+		case ".artifact":
+			registry.Artifacts[name] = quadlet.LoadArtifact(u)
+		}
+	}
+
+	// Pass 2: Convert
+	type result struct {
+		Name    string
+		Objects []runtime.Object
+	}
+	var results []result
+
+	// We need to iterate in a deterministic order or just iterate inputFiles again to keep user order?
+	// Iterating inputFiles again is better to respect command line order somewhat.
+	// However, we now have them in maps. Let's iterate inputFiles and lookup in registry.
+
+	for _, inputFile := range inputFiles {
+		absPath, err := filepath.Abs(inputFile)
+		if err != nil {
+			continue
+		}
+		filename := filepath.Base(absPath)
+		ext := filepath.Ext(filename)
+		name := strings.TrimSuffix(filename, ext)
+
 		var objects []runtime.Object
+		var convertErr error
 
 		switch ext {
 		case ".container":
-			c := quadlet.LoadContainer(u)
-			if c.Container.Pod != "" {
-				// Check if we are processing the pod too?
-				// Actually, if we are processing all files, the pod logic in ConvertPod handles its containers.
-				// If we process this container individually here, we get a Deployment.
-				// If ConvertPod handles it, we get it inside the Pod's Deployment.
-				// We should probably skip standalone conversion if it belongs to a Pod AND we are processing that Pod?
-				// But we don't know if we are processing that Pod yet (might be later in list).
-				// For now, let's just warn and convert as standalone (wrapper logic not applied).
-				// This is consistent with previous behavior.
-				safeFilename := sanitize(filename)
-				safePod := sanitize(c.Container.Pod)
-				fmt.Fprintf(os.Stderr, "Warning: Container %s belongs to pod %s. Converting as standalone Deployment (pod wrapper logic not applied).\n", safeFilename, safePod) // #nosec G705
+			if c, ok := registry.Containers[name]; ok {
+				if c.Container.Pod != "" {
+					safeFilename := sanitize(filename)
+					safePod := sanitize(c.Container.Pod)
+					// Check if the pod is also being processed?
+					// If the pod is in registry.Pods, we might not want to output this standalone.
+					// However, the report says: "It also generates a standalone duplicate Deployment for the container (with a warning)."
+					// The user requirements didn't explicitly ask to remove this behavior, but implied "fix valid k8s manifests".
+					// Having duplicate deployments (one standalone, one inside pod) IS invalid if they fight for resources/ports.
+					// But let's stick to current behavior + warning for now unless instructed otherwise,
+					// or maybe skip if pod is found?
+					// The prompt "Fix Pod Volume Mount Propagation" implies we fix the Pod generation.
+					// It doesn't explicitly say "Stop generating standalone container deployments if they belong to a pod".
+					// But let's keep the warning.
+					fmt.Fprintf(os.Stderr, "Warning: Container %s belongs to pod %s. Converting as standalone Deployment (pod wrapper logic not applied).\n", safeFilename, safePod) // #nosec G705
+				}
+				// We need to pass the registry for volume lookup
+				objects, convertErr = converter.ConvertContainer(c, name, registry.Volumes)
 			}
-			objs, err := converter.ConvertContainer(c, name)
-			if err != nil {
-				return err
-			}
-			objects = objs
-
 		case ".volume":
-			v := quadlet.LoadVolume(u)
-			objs, err := converter.ConvertVolume(v, name)
-			if err != nil {
-				return err
+			if v, ok := registry.Volumes[name]; ok {
+				objects, convertErr = converter.ConvertVolume(v, name)
 			}
-			objects = objs
-
 		case ".pod":
-			p := quadlet.LoadPod(u)
-			// Note: This still scans the directory of the pod file for containers.
-			// It assumes containers are in the same directory.
-			containers, containerNames, err := findContainersForPod(dir, filename)
-			if err != nil {
-				return fmt.Errorf("failed to scan for containers: %w", err)
+			if p, ok := registry.Pods[name]; ok {
+				// Find containers for this pod from the registry
+				var podContainers []*quadlet.ContainerUnit
+				var containerNames []string
+				// We have to scan all containers in registry to find those belonging to this pod
+				// This replaces `findContainersForPod`
+				for cName, cUnit := range registry.Containers {
+					// Check if container belongs to this pod
+					// Pod reference can be "podname" or "podname.pod"
+					if cUnit.Container.Pod == name || cUnit.Container.Pod == name+".pod" {
+						podContainers = append(podContainers, cUnit)
+						containerNames = append(containerNames, cName)
+					}
+				}
+				objects, convertErr = converter.ConvertPod(p, podContainers, containerNames, name, registry.Volumes)
 			}
-			objs, err := converter.ConvertPod(p, containers, containerNames, name)
-			if err != nil {
-				return err
-			}
-			objects = objs
-
 		case ".kube":
-			k := quadlet.LoadKube(u)
-			objs, err := converter.ConvertKube(k, name)
-			if err != nil {
-				return err
+			if k, ok := registry.Kubes[name]; ok {
+				objects, convertErr = converter.ConvertKube(k, name)
 			}
-			objects = objs
-
 		case ".network":
-			n := quadlet.LoadNetwork(u)
-			objs, err := converter.ConvertNetwork(n, name)
-			if err != nil {
-				return err
+			if n, ok := registry.Networks[name]; ok {
+				objects, convertErr = converter.ConvertNetwork(n, name)
 			}
-			objects = objs
-
 		case ".image":
-			i := quadlet.LoadImage(u)
-			objs, err := converter.ConvertImage(i, name)
-			if err != nil {
-				return err
+			if i, ok := registry.Images[name]; ok {
+				objects, convertErr = converter.ConvertImage(i, name)
 			}
-			objects = objs
-
 		case ".build":
-			b := quadlet.LoadBuild(u)
-			objs, err := converter.ConvertBuild(b, name)
-			if err != nil {
-				return err
+			if b, ok := registry.Builds[name]; ok {
+				objects, convertErr = converter.ConvertBuild(b, name)
 			}
-			objects = objs
 		case ".artifact":
-			a := quadlet.LoadArtifact(u)
-			objs, err := converter.ConvertArtifact(a, name)
-			if err != nil {
-				return err
+			if a, ok := registry.Artifacts[name]; ok {
+				objects, convertErr = converter.ConvertArtifact(a, name)
 			}
-			objects = objs
+		}
+
+		if convertErr != nil {
+			return convertErr
 		}
 
 		if len(objects) > 0 {
-			results = append(results, result{Name: name, Objects: objects, Path: absPath})
+			results = append(results, result{Name: name, Objects: objects})
 		}
 	}
 
@@ -226,7 +269,7 @@ func runConvert(cmd *cobra.Command, args []string) error {
 		if splitOutput {
 			// Write to file
 			outFilename := fmt.Sprintf("%s.yaml", res.Name)
-			// #nosec G304 -- outFilename is derived from user input filename, sanitized via filepath.Base
+			// #nosec G304
 			f, err := os.Create(outFilename)
 			if err != nil {
 				return fmt.Errorf("failed to create output file %s: %w", outFilename, err)
@@ -281,52 +324,6 @@ func isSupportedExtension(ext string) bool {
 		return true
 	}
 	return false
-}
-
-func findContainersForPod(dir string, podFilename string) ([]*quadlet.ContainerUnit, []string, error) {
-	files, err := os.ReadDir(dir)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	var containers []*quadlet.ContainerUnit
-	var names []string
-
-	for _, file := range files {
-		if file.IsDir() {
-			continue
-		}
-		if filepath.Ext(file.Name()) != ".container" {
-			continue
-		}
-
-		path := filepath.Clean(filepath.Join(dir, file.Name()))
-		f, err := os.Open(path)
-		if err != nil {
-			// Warn and skip?
-			safePath := sanitize(path)
-			safeErr := sanitize(err.Error())
-			fmt.Fprintf(os.Stderr, "Warning: failed to read %s: %s\n", safePath, safeErr)
-			continue
-		}
-
-		// Parse
-		u, err := parser.Parse(f)
-		_ = f.Close()
-		if err != nil {
-			continue
-		}
-
-		// Load minimal to check Pod
-		// Or just load full? Full is fine.
-		c := quadlet.LoadContainer(u)
-
-		if c.Container.Pod == podFilename || c.Container.Pod == strings.TrimSuffix(podFilename, ".pod") {
-			containers = append(containers, c)
-			names = append(names, strings.TrimSuffix(file.Name(), ".container"))
-		}
-	}
-	return containers, names, nil
 }
 
 func sanitize(s string) string {

@@ -57,7 +57,7 @@ Volume=my-pvc:/data
 	unit, _ := parser.Parse(reader)
 	qContainer := quadlet.LoadContainer(unit)
 
-	objs, err := ConvertContainer(qContainer, "app-with-vol")
+	objs, err := ConvertContainer(qContainer, "app-with-vol", nil)
 	if err != nil {
 		t.Fatalf("ConvertContainer failed: %v", err)
 	}

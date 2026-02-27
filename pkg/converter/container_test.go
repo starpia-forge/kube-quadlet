@@ -28,7 +28,7 @@ PublishPort=8080:80
 	unit, _ := parser.Parse(reader)
 	qContainer := quadlet.LoadContainer(unit)
 
-	objs, err := ConvertContainer(qContainer, "my-app")
+	objs, err := ConvertContainer(qContainer, "my-app", nil)
 	if err != nil {
 		t.Fatalf("ConvertContainer failed: %v", err)
 	}

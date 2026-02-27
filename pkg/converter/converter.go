@@ -44,8 +44,9 @@ func ConvertVolume(v *quadlet.VolumeUnit, name string) ([]runtime.Object, error)
 	return []runtime.Object{pvc}, nil
 }
 
-func ConvertContainer(c *quadlet.ContainerUnit, name string) ([]runtime.Object, error) {
-	container, volumes, servicePorts, err := createContainerSpec(c, name)
+// ConvertContainer now accepts a volume registry to lookup actual VolumeName
+func ConvertContainer(c *quadlet.ContainerUnit, name string, volumeRegistry map[string]*quadlet.VolumeUnit) ([]runtime.Object, error) {
+	container, volumes, servicePorts, err := createContainerSpec(c, name, volumeRegistry)
 	if err != nil {
 		return nil, err
 	}
@@ -106,7 +107,7 @@ func ConvertContainer(c *quadlet.ContainerUnit, name string) ([]runtime.Object, 
 	return objects, nil
 }
 
-func ConvertPod(p *quadlet.PodUnit, containers []*quadlet.ContainerUnit, containerNames []string, name string) ([]runtime.Object, error) {
+func ConvertPod(p *quadlet.PodUnit, containers []*quadlet.ContainerUnit, containerNames []string, name string, volumeRegistry map[string]*quadlet.VolumeUnit) ([]runtime.Object, error) {
 	var objects []runtime.Object
 	labels := map[string]string{
 		"app.kubernetes.io/name": name,
@@ -114,18 +115,20 @@ func ConvertPod(p *quadlet.PodUnit, containers []*quadlet.ContainerUnit, contain
 
 	var podContainers []corev1.Container
 	var podVolumes []corev1.Volume
+	var podVolumeMounts []corev1.VolumeMount
 
 	for i, volSpec := range p.Pod.Volume {
-		vol, _, err := parseVolumeSpec(volSpec, fmt.Sprintf("pod-vol-%d", i))
+		vol, mount, err := parseVolumeSpec(volSpec, fmt.Sprintf("pod-vol-%d", i), volumeRegistry)
 		if err != nil {
 			return nil, err
 		}
 		podVolumes = append(podVolumes, *vol)
+		podVolumeMounts = append(podVolumeMounts, *mount)
 	}
 
 	for i, c := range containers {
 		cName := containerNames[i]
-		container, cVolumes, _, err := createContainerSpec(c, cName)
+		container, cVolumes, _, err := createContainerSpec(c, cName, volumeRegistry)
 		if err != nil {
 			return nil, err
 		}
@@ -141,6 +144,9 @@ func ConvertPod(p *quadlet.PodUnit, containers []*quadlet.ContainerUnit, contain
 				}
 			}
 		}
+
+		// Mount pod-level volumes into the container
+		container.VolumeMounts = append(container.VolumeMounts, podVolumeMounts...)
 
 		podContainers = append(podContainers, *container)
 		podVolumes = append(podVolumes, cVolumes...)
@@ -175,11 +181,20 @@ func ConvertPod(p *quadlet.PodUnit, containers []*quadlet.ContainerUnit, contain
 	objects = append(objects, deployment)
 
 	var servicePorts []corev1.ServicePort
+	seenServicePorts := make(map[int32]string)
+
 	for i, portSpec := range p.Pod.PublishPort {
 		_, _, sPort, err := parsePortSpec(portSpec, fmt.Sprintf("pod-port-%d", i))
 		if err != nil {
 			continue
 		}
+
+		// Check for duplicate host port
+		if definedIn, ok := seenServicePorts[sPort.Port]; ok {
+			return nil, fmt.Errorf("duplicate port definition detected in Pod: port %d is already defined in %s", sPort.Port, definedIn)
+		}
+		seenServicePorts[sPort.Port] = fmt.Sprintf("PublishPort index %d", i)
+
 		servicePorts = append(servicePorts, *sPort)
 	}
 
@@ -206,21 +221,9 @@ func ConvertPod(p *quadlet.PodUnit, containers []*quadlet.ContainerUnit, contain
 }
 
 func ConvertKube(k *quadlet.KubeUnit, name string) ([]runtime.Object, error) {
-	// Kube unit points to a YAML file.
-	// We can try to read it if we know the path, but the converter might not have access to the file system context easily
-	// if we passed just the struct. However, since we are doing static conversion, we can assume relative paths are relative to where we run.
-	// But `kuadlet` is running from some PWD.
-	// The `Yaml` field in `k.Kube` is the path.
-
-	// Since we can't easily include the file content here without reading it,
-	// and `kuadlet convert` logic is better suited to read it if we wanted to embed it.
-	// But simply echoing it or warning is safer.
-
-	// Warning as per plan
 	safeName := sanitize(name)
 	// #nosec G705
 	fmt.Fprintf(os.Stderr, "Warning: .kube unit %s detected. This unit type wraps a Kubernetes YAML file. Kuadlet cannot fully convert this wrapper to a Kubernetes manifest as it IS already a Kubernetes manifest wrapper. Please apply the referenced YAML file directly: %s\n", safeName, k.Kube.Yaml)
-
 	return nil, nil
 }
 
@@ -252,7 +255,7 @@ func ConvertArtifact(a *quadlet.ArtifactUnit, name string) ([]runtime.Object, er
 	return nil, nil
 }
 
-func createContainerSpec(c *quadlet.ContainerUnit, name string) (*corev1.Container, []corev1.Volume, []corev1.ServicePort, error) {
+func createContainerSpec(c *quadlet.ContainerUnit, name string, volumeRegistry map[string]*quadlet.VolumeUnit) (*corev1.Container, []corev1.Volume, []corev1.ServicePort, error) {
 	var env []corev1.EnvVar
 	for k, v := range c.Container.Environment {
 		env = append(env, corev1.EnvVar{
@@ -278,11 +281,22 @@ func createContainerSpec(c *quadlet.ContainerUnit, name string) (*corev1.Contain
 	var containerPorts []corev1.ContainerPort
 	var servicePorts []corev1.ServicePort
 
+	// Deduplication check for Service Ports
+	// Key: port (host port)
+	seenServicePorts := make(map[int32]string)
+
 	for i, portSpec := range c.Container.PublishPort {
 		cPort, _, sPort, err := parsePortSpec(portSpec, fmt.Sprintf("port-%d", i))
 		if err != nil {
 			continue
 		}
+
+		// Check for duplicate host port
+		if definedIn, ok := seenServicePorts[sPort.Port]; ok {
+			return nil, nil, nil, fmt.Errorf("duplicate port definition detected: port %d is already defined in %s", sPort.Port, definedIn)
+		}
+		seenServicePorts[sPort.Port] = fmt.Sprintf("PublishPort index %d", i)
+
 		containerPorts = append(containerPorts, *cPort)
 		servicePorts = append(servicePorts, *sPort)
 	}
@@ -291,7 +305,7 @@ func createContainerSpec(c *quadlet.ContainerUnit, name string) (*corev1.Contain
 	var volumes []corev1.Volume
 
 	for i, volSpec := range c.Container.Volume {
-		vol, mount, err := parseVolumeSpec(volSpec, fmt.Sprintf("vol-%d", i))
+		vol, mount, err := parseVolumeSpec(volSpec, fmt.Sprintf("vol-%d", i), volumeRegistry)
 		if err != nil {
 			continue
 		}
@@ -299,119 +313,125 @@ func createContainerSpec(c *quadlet.ContainerUnit, name string) (*corev1.Contain
 		volumeMounts = append(volumeMounts, *mount)
 	}
 
-    // Probes
-    var livenessProbe *corev1.Probe
-    if c.Container.HealthCmd != "" {
-        // "none" disables it
-        if c.Container.HealthCmd != "none" {
-            // HealthCmd is usually a command string.
-            // Split it? Or pass to sh -c?
-            // Podman HealthCmd: "CMD-SHELL curl -f http://localhost/ || exit 1" or just "curl ..."
-            // K8s ExecAction command is []string.
-            // If we split nicely:
-            probeCmd, err := SplitArgs(c.Container.HealthCmd)
-            if err == nil {
-                livenessProbe = &corev1.Probe{
-                    ProbeHandler: corev1.ProbeHandler{
-                        Exec: &corev1.ExecAction{
-                            Command: probeCmd,
-                        },
-                    },
-                }
+	// Probes
+	var livenessProbe *corev1.Probe
+	if c.Container.HealthCmd != "" {
+		// "none" disables it
+		if c.Container.HealthCmd != "none" {
+			var probeCmd []string
+			// If it looks like a JSON array or explicitly starts with sh -c, maybe we could trust it,
+			// but to be safe and consistent with typical shell usage in HealthCmd, we wrap it.
+			// However, if it IS an array (starts with [), we should probably parse it as such?
+			// Quadlet docs say HealthCmd is "command to run". Podman treats it as CMD-SHELL if string.
+			// So wrapping in sh -c is the correct default for a string.
+			// Exception: if it starts with `["`, it might be an exec array?
+			// But Quadlet parser reads it as a raw string.
+			// Let's assume it's a shell command string.
 
-                if c.Container.HealthInterval != "" {
-                    if d, err := time.ParseDuration(c.Container.HealthInterval); err == nil {
-                        if d.Seconds() > math.MaxInt32 {
-                            livenessProbe.PeriodSeconds = math.MaxInt32
-                        } else {
-                            livenessProbe.PeriodSeconds = int32(d.Seconds())
-                        }
-                    }
-                }
-                if c.Container.HealthTimeout != "" {
-                    if d, err := time.ParseDuration(c.Container.HealthTimeout); err == nil {
-                        if d.Seconds() > math.MaxInt32 {
-                            livenessProbe.TimeoutSeconds = math.MaxInt32
-                        } else {
-                            livenessProbe.TimeoutSeconds = int32(d.Seconds())
-                        }
-                    }
-                }
-                if c.Container.HealthStartPeriod != "" {
-                    if d, err := time.ParseDuration(c.Container.HealthStartPeriod); err == nil {
-                        if d.Seconds() > math.MaxInt32 {
-                            livenessProbe.InitialDelaySeconds = math.MaxInt32
-                        } else {
-                            livenessProbe.InitialDelaySeconds = int32(d.Seconds())
-                        }
-                    }
-                }
-                if c.Container.HealthRetries > 0 {
-                    if c.Container.HealthRetries > math.MaxInt32 {
-                         livenessProbe.FailureThreshold = math.MaxInt32
-                    } else {
-                         livenessProbe.FailureThreshold = int32(c.Container.HealthRetries)
-                    }
-                }
-            }
-        }
-    }
+			// Optimization: if it already starts with "sh -c" or "/bin/sh -c", we might split it naively?
+			// No, safer to just wrap it unless we want to parse it.
+			// But wait, if the user wrote `HealthCmd=curl ...`, we want `sh -c "curl ..."`.
+			// If we use SplitArgs, we get `["curl", "..."]`. This FAILS for `curl ... || exit 1`.
+			// So we MUST use `sh -c`.
+			probeCmd = []string{"sh", "-c", c.Container.HealthCmd}
 
-    // Resources
-    resources := corev1.ResourceRequirements{}
-    if c.Container.Memory != "" {
-        // Memory limit.
-        if q, err := resource.ParseQuantity(c.Container.Memory); err == nil {
-            resources.Limits = corev1.ResourceList{corev1.ResourceMemory: q}
-            resources.Requests = corev1.ResourceList{corev1.ResourceMemory: q}
-        }
-    }
+			livenessProbe = &corev1.Probe{
+				ProbeHandler: corev1.ProbeHandler{
+					Exec: &corev1.ExecAction{
+						Command: probeCmd,
+					},
+				},
+			}
 
-    // SecurityContext
-    securityContext := &corev1.SecurityContext{}
-    hasSecurityContext := false
+				if c.Container.HealthInterval != "" {
+					if d, err := time.ParseDuration(c.Container.HealthInterval); err == nil {
+						if d.Seconds() > math.MaxInt32 {
+							livenessProbe.PeriodSeconds = math.MaxInt32
+						} else {
+							livenessProbe.PeriodSeconds = int32(d.Seconds())
+						}
+					}
+				}
+				if c.Container.HealthTimeout != "" {
+					if d, err := time.ParseDuration(c.Container.HealthTimeout); err == nil {
+						if d.Seconds() > math.MaxInt32 {
+							livenessProbe.TimeoutSeconds = math.MaxInt32
+						} else {
+							livenessProbe.TimeoutSeconds = int32(d.Seconds())
+						}
+					}
+				}
+				if c.Container.HealthStartPeriod != "" {
+					if d, err := time.ParseDuration(c.Container.HealthStartPeriod); err == nil {
+						if d.Seconds() > math.MaxInt32 {
+							livenessProbe.InitialDelaySeconds = math.MaxInt32
+						} else {
+							livenessProbe.InitialDelaySeconds = int32(d.Seconds())
+						}
+					}
+				}
+				if c.Container.HealthRetries > 0 {
+					if c.Container.HealthRetries > math.MaxInt32 {
+						livenessProbe.FailureThreshold = math.MaxInt32
+					} else {
+						livenessProbe.FailureThreshold = int32(c.Container.HealthRetries)
+					}
+				}
+		}
+	}
 
-    if c.Container.User != "" {
-        // Try to parse int
-        if uid, err := strconv.ParseInt(c.Container.User, 10, 64); err == nil {
-            securityContext.RunAsUser = &uid
-            hasSecurityContext = true
-        }
-    }
-    if c.Container.Group != "" {
-        if gid, err := strconv.ParseInt(c.Container.Group, 10, 64); err == nil {
-            securityContext.RunAsGroup = &gid
-            hasSecurityContext = true
-        }
-    }
-    if c.Container.ReadOnly {
-        ro := true
-        securityContext.ReadOnlyRootFilesystem = &ro
-        hasSecurityContext = true
-    }
-    if c.Container.NoNewPrivileges {
-        nnp := false // AllowPrivilegeEscalation: false means NoNewPrivileges
-        securityContext.AllowPrivilegeEscalation = &nnp
-        hasSecurityContext = true
-    }
+	// Resources
+	resources := corev1.ResourceRequirements{}
+	if c.Container.Memory != "" {
+		if q, err := resource.ParseQuantity(c.Container.Memory); err == nil {
+			resources.Limits = corev1.ResourceList{corev1.ResourceMemory: q}
+			resources.Requests = corev1.ResourceList{corev1.ResourceMemory: q}
+		}
+	}
 
-    if len(c.Container.AddCapability) > 0 || len(c.Container.DropCapability) > 0 {
-        caps := &corev1.Capabilities{}
-        for _, cap := range c.Container.AddCapability {
-            caps.Add = append(caps.Add, corev1.Capability(strings.ToUpper(cap)))
-        }
-        for _, cap := range c.Container.DropCapability {
-            caps.Drop = append(caps.Drop, corev1.Capability(strings.ToUpper(cap)))
-        }
-        securityContext.Capabilities = caps
-        hasSecurityContext = true
-    }
+	// SecurityContext
+	securityContext := &corev1.SecurityContext{}
+	hasSecurityContext := false
 
-    // Only set if we populated something
-    var sc *corev1.SecurityContext
-    if hasSecurityContext {
-        sc = securityContext
-    }
+	if c.Container.User != "" {
+		if uid, err := strconv.ParseInt(c.Container.User, 10, 64); err == nil {
+			securityContext.RunAsUser = &uid
+			hasSecurityContext = true
+		}
+	}
+	if c.Container.Group != "" {
+		if gid, err := strconv.ParseInt(c.Container.Group, 10, 64); err == nil {
+			securityContext.RunAsGroup = &gid
+			hasSecurityContext = true
+		}
+	}
+	if c.Container.ReadOnly {
+		ro := true
+		securityContext.ReadOnlyRootFilesystem = &ro
+		hasSecurityContext = true
+	}
+	if c.Container.NoNewPrivileges {
+		nnp := false
+		securityContext.AllowPrivilegeEscalation = &nnp
+		hasSecurityContext = true
+	}
+
+	if len(c.Container.AddCapability) > 0 || len(c.Container.DropCapability) > 0 {
+		caps := &corev1.Capabilities{}
+		for _, cap := range c.Container.AddCapability {
+			caps.Add = append(caps.Add, corev1.Capability(strings.ToUpper(cap)))
+		}
+		for _, cap := range c.Container.DropCapability {
+			caps.Drop = append(caps.Drop, corev1.Capability(strings.ToUpper(cap)))
+		}
+		securityContext.Capabilities = caps
+		hasSecurityContext = true
+	}
+
+	var sc *corev1.SecurityContext
+	if hasSecurityContext {
+		sc = securityContext
+	}
 
 	container := &corev1.Container{
 		Name:            name,
@@ -422,9 +442,9 @@ func createContainerSpec(c *quadlet.ContainerUnit, name string) (*corev1.Contain
 		Ports:           containerPorts,
 		WorkingDir:      c.Container.WorkingDir,
 		VolumeMounts:    volumeMounts,
-        LivenessProbe:   livenessProbe,
-        Resources:       resources,
-        SecurityContext: sc,
+		LivenessProbe:   livenessProbe,
+		Resources:       resources,
+		SecurityContext: sc,
 	}
 
 	return container, volumes, servicePorts, nil
@@ -481,7 +501,7 @@ func parsePortSpec(spec string, name string) (*corev1.ContainerPort, int, *corev
 	return cp, hPort, sp, nil
 }
 
-func parseVolumeSpec(spec string, name string) (*corev1.Volume, *corev1.VolumeMount, error) {
+func parseVolumeSpec(spec string, name string, volumeRegistry map[string]*quadlet.VolumeUnit) (*corev1.Volume, *corev1.VolumeMount, error) {
 	parts := strings.Split(spec, ":")
 	var source, dest string
 	var readOnly bool
@@ -536,7 +556,26 @@ func parseVolumeSpec(spec string, name string) (*corev1.Volume, *corev1.VolumeMo
 	} else {
 		claimName := source
 		if strings.HasSuffix(source, ".volume") {
-			claimName = strings.TrimSuffix(source, ".volume")
+			// Cross-referencing logic
+			volumeName := strings.TrimSuffix(source, ".volume")
+
+			// Lookup in registry
+			if volumeRegistry != nil {
+				if v, ok := volumeRegistry[volumeName]; ok {
+					if v.Volume.VolumeName != "" {
+						claimName = v.Volume.VolumeName
+					} else {
+						claimName = volumeName
+					}
+				} else {
+					// Fallback to filename if not found in registry (e.g. implicitly defined or external)
+					// Log warning?
+					// fmt.Fprintf(os.Stderr, "Warning: Referenced volume %s not found in input files. Using filename as claimName.\n", source)
+					claimName = volumeName
+				}
+			} else {
+				claimName = volumeName
+			}
 		}
 		vol = &corev1.Volume{
 			Name: name,

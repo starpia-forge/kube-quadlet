@@ -27,7 +27,7 @@ HealthRetries=3
 	unit, _ := parser.Parse(reader)
 	qContainer := quadlet.LoadContainer(unit)
 
-	objs, err := ConvertContainer(qContainer, "advanced")
+	objs, err := ConvertContainer(qContainer, "advanced", nil)
 	if err != nil {
 		t.Fatalf("ConvertContainer failed: %v", err)
 	}
