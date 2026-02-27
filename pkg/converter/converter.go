@@ -318,7 +318,6 @@ func createContainerSpec(c *quadlet.ContainerUnit, name string, volumeRegistry m
 	if c.Container.HealthCmd != "" {
 		// "none" disables it
 		if c.Container.HealthCmd != "none" {
-			var probeCmd []string
 			// If it looks like a JSON array or explicitly starts with sh -c, maybe we could trust it,
 			// but to be safe and consistent with typical shell usage in HealthCmd, we wrap it.
 			// However, if it IS an array (starts with [), we should probably parse it as such?
@@ -333,7 +332,7 @@ func createContainerSpec(c *quadlet.ContainerUnit, name string, volumeRegistry m
 			// But wait, if the user wrote `HealthCmd=curl ...`, we want `sh -c "curl ..."`.
 			// If we use SplitArgs, we get `["curl", "..."]`. This FAILS for `curl ... || exit 1`.
 			// So we MUST use `sh -c`.
-			probeCmd = []string{"sh", "-c", c.Container.HealthCmd}
+			probeCmd := []string{"sh", "-c", c.Container.HealthCmd}
 
 			livenessProbe = &corev1.Probe{
 				ProbeHandler: corev1.ProbeHandler{
