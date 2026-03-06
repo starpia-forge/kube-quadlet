@@ -1,7 +1,7 @@
 # kuadlet
 
-![Go Version](https://img.shields.io/github/go-mod/go-version/starpia-forge/kuadlet)
-![Latest Release](https://img.shields.io/github/v/release/starpia-forge/kuadlet)
+![Go Version](https://img.shields.io/github/go-mod/go-version/starpia-forge/kuadlet?logo=go)
+![Latest Release](https://img.shields.io/github/v/release/starpia-forge/kuadlet?logo=github)
 ![CI/CD](https://github.com/starpia-forge/kuadlet/actions/workflows/ci-cd.yaml/badge.svg)
 
 `kuadlet` is a lightweight CLI tool designed to bridge the gap between Podman's systemd integration and Kubernetes. It statically parses Podman Quadlet configuration files (such as `.container`, `.pod`, and `.volume`) and automatically generates equivalent Kubernetes YAML manifests.
